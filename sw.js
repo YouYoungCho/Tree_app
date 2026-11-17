@@ -1,5 +1,5 @@
 /* 오프라인 지원: 숲에서는 인터넷이 안 될 수 있으므로 앱 파일을 모두 캐시합니다. */
-const CACHE = 'forest-id-v1';
+const CACHE = 'forest-id-v2';
 const FILES = ['./', 'index.html', 'css/style.css', 'js/data.js', 'js/icons.js', 'js/app.js', 'manifest.webmanifest', 'icons/icon.svg'];
 
 self.addEventListener('install', (e) => {

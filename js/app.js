@@ -73,11 +73,108 @@
     save() {
       try { localStorage.setItem('forest-id-answers', JSON.stringify(Engine.answers)); } catch (e) { /* 무시 */ }
     },
+    loadLearn() {
+      try { return localStorage.getItem('forest-id-learn') === '1'; } catch (e) { return false; }
+    },
+    saveLearn(on) {
+      try { localStorage.setItem('forest-id-learn', on ? '1' : '0'); } catch (e) { /* 무시 */ }
+    },
   };
 
   /* ======================= 화면 ======================= */
   const main = $('#main');
   let pickedQuestion = null; // 사용자가 직접 고른 질문
+  let learn = false;          // 학습 모드: 후보 수를 숨기고, 답할 때마다 제외 이유를 보여 줌
+  let feedback = null;        // 마지막 답에 대한 학습 피드백
+  let verify = { id: null, marks: {} }; // 결과 확인 체크리스트 상태
+
+  function valuesText(sp, qid) {
+    const v = Engine.traitOf(sp, Q[qid]);
+    if (v === undefined) return '정보 없음';
+    return (Array.isArray(v) ? v : [v]).map((x) => optLabel(qid, x)).join('·');
+  }
+
+  /* 답 하나가 후보를 어떻게 바꿨는지 정리 (학습 모드) */
+  function buildFeedback(qid, v, before) {
+    const after = Engine.candidates();
+    if (v === SKIP) return { qid, v, skip: true, idx: Engine.answers.length - 1 };
+    const excluded = before.filter((sp) => !after.list.includes(sp));
+    const groups = {};
+    for (const sp of excluded) (groups[valuesText(sp, qid)] ||= []).push(sp.name);
+    return { qid, v, idx: Engine.answers.length - 1, kept: after.list.length, exact: after.exact, excludedCount: excluded.length, groups };
+  }
+
+  function feedbackHTML() {
+    if (!learn || !feedback || feedback.idx !== Engine.answers.length - 1) return '';
+    const f = feedback;
+    const q = Q[f.qid];
+    if (f.skip) {
+      return `<div class="fb fb-skip"><b>${esc(SHORT[f.qid])}</b>을(를) 건너뛰었어요. 나중에 확인할 수 있으면 결과 화면에서 다시 짚어 드릴게요.</div>`;
+    }
+    if (!f.exact) {
+      return `<div class="fb fb-bad">‘${esc(SHORT[f.qid])}: ${esc(optLabel(f.qid, f.v))}’와 맞는 후보가 없어요. 이 답이나 앞의 답 중 하나를 다시 관찰해 보세요.</div>`;
+    }
+    const groups = Object.entries(f.groups);
+    const body = f.excludedCount === 0
+      ? '<p>이번 답으로 제외된 후보는 없어요. 다른 특징으로 좁혀 볼게요.</p>'
+      : `<ul class="fb-list">${groups.map(([val, names]) => `<li><span class="fb-val">${esc(val)}</span> ${esc(names.slice(0, 6).join(', '))}${names.length > 6 ? ` 외 ${names.length - 6}종` : ''}</li>`).join('')}</ul>`;
+    return `<details class="fb" open>
+      <summary>✅ ‘${esc(q ? SHORT[f.qid] : '')}: ${esc(optLabel(f.qid, f.v))}’ → <b>${f.excludedCount}종 제외</b>, ${f.kept}종 남음</summary>
+      ${f.excludedCount ? '<p class="fb-why">제외된 식물은 이 특징이 다르기 때문이에요:</p>' : ''}${body}
+    </details>`;
+  }
+
+  /* 결과와 한 가지 답만 다른 식물들 — "이 답을 다르게 봤다면?" */
+  function nearMissHTML() {
+    const scored = SPECIES.map((sp) => ({ sp, m: Engine.mismatches(sp) }));
+    const min = Math.min(...scored.map((x) => x.m));
+    const near = scored.filter((x) => x.m === min + 1).map((x) => x.sp);
+    const byAnswer = new Map();
+    for (const sp of near) {
+      Engine.answers.forEach((a, i) => {
+        if (a.v !== SKIP && !Engine.compatible(sp, Q[a.q], a.v)) {
+          if (!byAnswer.has(i)) byAnswer.set(i, []);
+          byAnswer.get(i).push(sp);
+        }
+      });
+    }
+    if (!byAnswer.size) return '<p class="nm-none">한 가지 답만 다른 식물은 없어요. 처음부터 다시 관찰해 보세요.</p>';
+    return `<p>아래 답 중 하나를 잘못 봤을 수 있어요. 그 답을 다르게 봤다면 이런 식물이 후보가 돼요:</p><ul class="nm">` +
+      [...byAnswer.entries()].slice(0, 6).map(([i, sps]) => {
+        const a = Engine.answers[i];
+        return `<li><button class="nm-redo" data-remove="${i}" title="이 답 지우고 다시 보기">‘${esc(SHORT[a.q])}: ${esc(optLabel(a.q, a.v))}’ 다시 보기</button>
+          <span>${sps.slice(0, 4).map((sp) => `<a href="#/sp/${sp.id}">${esc(sp.name)}</a><small>(${esc(valuesText(sp, a.q))})</small>`).join(', ')}${sps.length > 4 ? ` 외 ${sps.length - 4}종` : ''}</span></li>`;
+      }).join('') + '</ul>';
+  }
+
+  /* 결과 확인 체크리스트 */
+  function verifyHTML(sp) {
+    if (verify.id !== sp.id) verify = { id: sp.id, marks: {} };
+    const items = sp.keys.map((k, i) => ({ k: 'k' + i, text: k }));
+    Engine.answers.filter((a) => a.v === SKIP && sp.t[a.q] !== undefined).forEach((a) => {
+      items.push({ k: 's' + a.q, text: `${SHORT[a.q]}: ${valuesText(sp, a.q)} (건너뛴 특징)` });
+    });
+    const marks = verify.marks;
+    const done = items.filter((it) => marks[it.k]).length;
+    const no = items.filter((it) => marks[it.k] === 'n').length;
+    const yes = items.filter((it) => marks[it.k] === 'y').length;
+    let verdict = '';
+    if (no) verdict = `<div class="vf-verdict vf-bad"><b>맞지 않는 특징이 ${no}개 있어요.</b> ${nearMissHTML()}</div>`;
+    else if (done === items.length) verdict = `<div class="vf-verdict vf-good">🎉 모든 특징이 맞아요! <b>${esc(sp.name)}</b>(으)로 동정했습니다. 핵심 특징을 기억해 두세요.</div>`;
+    else if (yes >= 2) verdict = `<div class="vf-verdict">지금까지 ${yes}개가 맞아요. 나머지도 확인해 보세요.</div>`;
+    return `<section class="verify">
+      <h3>🔍 실물과 비교해 확인하기</h3>
+      <p class="vf-help">앱의 결과는 "추정"입니다. 아래 특징을 실제 식물에서 하나씩 확인해 보세요. 볼 수 없는 계절의 특징은 "못 봄"을 누르세요.</p>
+      <ul class="vf-list">${items.map((it) => `<li class="vf-${marks[it.k] || ''}">
+        <span class="vf-text">${esc(it.text)}</span>
+        <span class="vf-btns">
+          <button data-vk="${it.k}" data-vm="y" class="${marks[it.k] === 'y' ? 'on' : ''}">맞아요</button>
+          <button data-vk="${it.k}" data-vm="n" class="${marks[it.k] === 'n' ? 'on' : ''}">아니에요</button>
+          <button data-vk="${it.k}" data-vm="u" class="${marks[it.k] === 'u' ? 'on' : ''}">못 봄</button>
+        </span></li>`).join('')}</ul>
+      ${verdict}
+    </section>`;
+  }
 
   function optLabel(qid, v) {
     const o = Q[qid].options.find((x) => x.v === v);
@@ -115,15 +212,17 @@
     const status = `
       <div class="status">
         <button class="count-btn" data-go="list" ${cands.length ? '' : 'disabled'}>
-          <span class="count-num">${cands.length}</span><span class="count-unit">종</span>
-          <span class="count-label">남은 후보 보기 ›</span>
+          ${learn && cands.length > 1
+            ? '<span class="count-learn">남은 후보 보기 ›</span>'
+            : `<span class="count-num">${cands.length}</span><span class="count-unit">종</span><span class="count-label">남은 후보 보기 ›</span>`}
         </button>
         <div class="status-actions">
+          <button class="ghost learn-toggle ${learn ? 'on' : ''}" data-act="learn" aria-pressed="${learn}">📘 학습 모드${learn ? ' 켜짐' : ''}</button>
           <button class="ghost" data-act="undo" ${Engine.answers.length ? '' : 'disabled'}>↶ 이전</button>
           <button class="ghost" data-act="reset" ${Engine.answers.length ? '' : 'disabled'}>처음부터</button>
         </div>
       </div>
-      ${chipsHTML()}${notice}`;
+      ${chipsHTML()}${feedbackHTML()}${notice}`;
 
     if (!q || cands.length <= 1) {
       main.innerHTML = status + resultHTML(cands, exact);
@@ -131,9 +230,9 @@
     }
 
     const counts = Engine.optionCounts(q, cands);
-    const opts = q.options
-      .map((o) => ({ o, c: counts[o.v] }))
-      .sort((a, b) => (a.c === 0) - (b.c === 0)); // 해당 없는 선택지는 뒤로
+    const opts = q.options.map((o) => ({ o, c: counts[o.v] }));
+    // 학습 모드에서는 후보 수를 숨기고 순서도 바꾸지 않음 → 숫자가 아니라 관찰로 고르게
+    if (!learn) opts.sort((a, b) => (a.c === 0) - (b.c === 0)); // 해당 없는 선택지는 뒤로
     const step = Engine.answers.length + 1;
     const others = Engine.usefulQuestions(cands).filter((x) => x.id !== q.id);
 
@@ -141,16 +240,17 @@
       <section class="qcard" aria-live="polite">
         <div class="qstep">질문 ${step}</div>
         <h2 class="qtitle">${esc(q.title)}</h2>
-        ${q.help ? `<details class="help"><summary>어떻게 보나요?</summary><p>${esc(q.help)}</p></details>` : ''}
+        ${q.help ? `<details class="help" ${learn ? 'open' : ''}><summary>어떻게 보나요?</summary><p>${esc(q.help)}</p></details>` : ''}
+        ${q.why ? `<details class="help why" ${learn ? 'open' : ''}><summary>왜 이걸 보나요?</summary><p>${esc(q.why)}</p></details>` : ''}
         <div class="opts ${q.id === 'fcolor' || q.id === 'season' ? 'opts-compact' : ''}">
           ${opts.map(({ o, c }) => `
-            <button class="opt ${c === 0 ? 'opt-none' : ''}" data-q="${q.id}" data-v="${esc(o.v)}">
+            <button class="opt ${c === 0 && !learn ? 'opt-none' : ''}" data-q="${q.id}" data-v="${esc(o.v)}">
               <span class="opt-ic">${Icons.forOption(q.id, o)}</span>
               <span class="opt-tx">
                 <span class="opt-label">${esc(o.label)}</span>
                 ${o.sub ? `<span class="opt-sub">${esc(o.sub)}</span>` : ''}
               </span>
-              <span class="opt-n">${c ? c + '종' : '없음'}</span>
+              ${learn ? '' : `<span class="opt-n">${c ? c + '종' : '없음'}</span>`}
             </button>`).join('')}
         </div>
         <div class="qfoot">
@@ -168,6 +268,7 @@
       const sp = cands[0];
       return `<section class="result">
         <div class="result-head">${exact ? '🌿 이 식물일 가능성이 높아요' : '🔎 가장 비슷한 식물이에요'}</div>
+        ${verifyHTML(sp)}
         ${detailHTML(sp, true)}
         <div class="result-actions">
           <button class="primary" data-act="reset">새로 찾기</button>
@@ -177,12 +278,23 @@
     }
     return `<section class="result">
       <div class="result-head">더 가를 수 있는 질문이 없어요. 아래 ${cands.length}종 중에서 <b>핵심 특징</b>을 비교해 보세요.</div>
+      ${compareHTML(cands)}
       ${listHTML(cands)}
       <div class="result-actions">
         <button class="primary" data-act="reset">새로 찾기</button>
         <button class="secondary" data-act="undo">↶ 마지막 답 고치기</button>
       </div>
     </section>`;
+  }
+
+  /* 후보가 2~4종 남았을 때: 핵심 특징·차이점 나란히 비교 */
+  function compareHTML(list) {
+    if (list.length > 4) return '';
+    return `<div class="compare">${list.map((sp) => `<div class="cmp">
+      <a class="cmp-name" href="#/sp/${sp.id}">${esc(sp.name)}</a>
+      <ul>${sp.keys.slice(0, 3).map((k) => `<li>${esc(k)}</li>`).join('')}</ul>
+      ${sp.similar ? `<p class="cmp-sim">💡 ${esc(sp.similar)}</p>` : ''}
+    </div>`).join('')}</div>`;
   }
 
   function listHTML(list) {
@@ -273,14 +385,26 @@
     const b = e.target.closest('button, a');
     if (!b) return;
     if (b.dataset.q) {
+      const before = Engine.candidates().list;
       Engine.answers.push({ q: b.dataset.q, v: b.dataset.v });
+      feedback = buildFeedback(b.dataset.q, b.dataset.v, before);
       store.save();
       renderQuiz();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else if (b.dataset.remove !== undefined) {
       Engine.answers.splice(+b.dataset.remove, 1);
+      feedback = null;
       store.save();
-      route();
+      if (location.hash.startsWith('#/sp/')) location.hash = '#/'; else route();
+    } else if (b.dataset.vk) {
+      const k = b.dataset.vk;
+      verify.marks[k] = verify.marks[k] === b.dataset.vm ? undefined : b.dataset.vm;
+      const y = window.scrollY;
+      renderQuiz();
+      window.scrollTo(0, y);
+    } else if (b.dataset.act === 'learn') {
+      learn = !learn; store.saveLearn(learn); feedback = null;
+      renderQuiz();
     } else if (b.dataset.pick) {
       pickedQuestion = b.dataset.pick;
       renderQuiz();
@@ -290,10 +414,10 @@
       browseState.type = b.dataset.type;
       renderBrowse();
     } else if (b.dataset.act === 'undo') {
-      Engine.answers.pop(); store.save();
+      Engine.answers.pop(); feedback = null; store.save();
       if (location.hash.startsWith('#/sp/') || location.hash.startsWith('#/list')) location.hash = '#/'; else renderQuiz();
     } else if (b.dataset.act === 'reset') {
-      Engine.answers = []; store.save();
+      Engine.answers = []; feedback = null; verify = { id: null, marks: {} }; store.save();
       if (location.hash && location.hash !== '#/') location.hash = '#/'; else renderQuiz();
     } else if (b.dataset.act === 'back') {
       if (history.length > 1) history.back(); else location.hash = '#/';
@@ -302,6 +426,7 @@
 
   window.addEventListener('hashchange', route);
   store.load();
+  learn = store.loadLearn();
   route();
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
