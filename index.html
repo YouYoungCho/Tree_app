@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>숲 식물 찾기</title>
+  <meta name="description" content="질문에 하나씩 답하며 숲의 나무와 들꽃 이름을 알아내는 식물 동정 앱">
+  <meta name="theme-color" content="#2f6b3a">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/" data-act="home"><span class="logo" aria-hidden="true">🌲</span> 숲 식물 찾기</a>
+    <nav class="tabs">
+      <a class="tab" data-tab="quiz" href="#/">동정하기</a>
+      <a class="tab" data-tab="browse" href="#/browse">도감</a>
+    </nav>
+  </header>
+  <main id="main" class="wrap"></main>
+  <footer class="foot wrap">
+    질문에 답할수록 후보가 줄어듭니다. 확실하지 않으면 <b>건너뛰기</b>를 누르세요.<br>
+    ⚠️ 이 앱만으로 먹을 수 있는 식물인지 판단하지 마세요.
+  </footer>
+  <script src="js/data.js"></script>
+  <script src="js/icons.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "숲 식물 찾기",
+  "short_name": "식물찾기",
+  "description": "질문에 답하며 숲의 나무와 들꽃 이름을 알아내는 동정 앱",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f7f1",
+  "theme_color": "#2f6b3a",
+  "lang": "ko",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
